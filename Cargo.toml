@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 burn = { version = "=0.22.0-pre.3", features = ["ndarray"] }
+image = "0.25.10"
