@@ -2,12 +2,16 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use burn::tensor::{Device, Tensor, TensorData};
+use burn::tensor::{Device, Int, Tensor, TensorData};
 use image::imageops::FilterType;
 
 pub const IMAGE_WIDTH: usize = 32;
 pub const IMAGE_HEIGHT: usize = 32;
 pub const CHANNELS: usize = 3;
+pub const PATCH_SIZE: usize = 8;
+pub const PATCHES_PER_SIDE: usize = IMAGE_WIDTH / PATCH_SIZE;
+pub const NUM_PATCHES: usize = PATCHES_PER_SIDE * PATCHES_PER_SIDE;
+pub const PATCH_VALUES: usize = CHANNELS * PATCH_SIZE * PATCH_SIZE;
 pub const CLASS_NAMES: [&str; 2] = ["cats", "dogs"];
 
 pub const TRAIN_DIRECTORY: &str = "data/train";
@@ -17,6 +21,11 @@ pub const VALIDATION_DIRECTORY: &str = "data/valid";
 pub struct Sample {
     pub path: PathBuf,
     pub label: usize,
+}
+
+pub struct Batch {
+    pub images: Tensor<4>,
+    pub labels: Tensor<1, Int>,
 }
 
 pub fn class_index(class_name: &str) -> Option<usize> {
@@ -90,12 +99,59 @@ pub fn load_image(path: impl AsRef<Path>, device: &Device) -> Result<Tensor<3>, 
     ))
 }
 
+pub fn load_batch(samples: &[Sample], device: &Device) -> Result<Batch, Box<dyn Error>> {
+    if samples.is_empty() {
+        return Err("cannot load an empty batch".into());
+    }
+
+    let mut images = Vec::with_capacity(samples.len());
+    let mut labels = Vec::with_capacity(samples.len());
+    for sample in samples {
+        images.push(load_image(&sample.path, device)?);
+        labels.push(sample.label as i64);
+    }
+
+    Ok(Batch {
+        images: Tensor::stack::<4>(images, 0),
+        labels: Tensor::from_data(TensorData::new(labels, [samples.len()]), device),
+    })
+}
+
+pub fn patchify(images: Tensor<4>) -> Tensor<3> {
+    let [batch_size, channels, height, width] = images.dims();
+    assert_eq!(channels, CHANNELS, "patchify expects RGB images");
+    assert_eq!(
+        height, IMAGE_HEIGHT,
+        "patchify expects the configured image height"
+    );
+    assert_eq!(
+        width, IMAGE_WIDTH,
+        "patchify expects the configured image width"
+    );
+
+    images
+        .reshape([
+            batch_size,
+            CHANNELS,
+            PATCHES_PER_SIDE,
+            PATCH_SIZE,
+            PATCHES_PER_SIDE,
+            PATCH_SIZE,
+        ])
+        .permute([0, 2, 4, 1, 3, 5])
+        .reshape([batch_size, NUM_PATCHES, PATCH_VALUES])
+}
+
 #[cfg(test)]
 mod tests {
+    use burn::tensor::{Tensor, TensorData};
     use image::{ImageBuffer, Rgb};
 
     use super::class_index;
-    use super::{CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH, Sample, discover_samples, load_image};
+    use super::{
+        CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH, NUM_PATCHES, PATCH_VALUES, Sample, discover_samples,
+        load_batch, load_image, patchify,
+    };
 
     #[test]
     fn class_names_map_to_stable_indices() {
@@ -160,5 +216,58 @@ mod tests {
         );
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn samples_become_a_batch_with_aligned_labels() {
+        let root = std::env::temp_dir().join(format!("vit-batch-test-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+
+        let first_path = root.join("first.png");
+        let second_path = root.join("second.png");
+        ImageBuffer::from_pixel(2, 2, Rgb([255u8, 0, 0]))
+            .save(&first_path)
+            .unwrap();
+        ImageBuffer::from_pixel(2, 2, Rgb([0u8, 255, 0]))
+            .save(&second_path)
+            .unwrap();
+
+        let samples = vec![
+            Sample {
+                path: first_path,
+                label: 0,
+            },
+            Sample {
+                path: second_path,
+                label: 1,
+            },
+        ];
+        let device = Default::default();
+        let batch = load_batch(&samples, &device).unwrap();
+
+        assert_eq!(
+            batch.images.dims(),
+            [2, CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH]
+        );
+        assert_eq!(batch.labels.dims(), [2]);
+        assert_eq!(batch.labels.to_data().as_slice::<i64>().unwrap(), &[0, 1]);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn image_batches_become_patch_sequences() {
+        let device = Default::default();
+        let images = Tensor::from_data(
+            TensorData::new(
+                vec![0.0; 2 * CHANNELS * IMAGE_HEIGHT * IMAGE_WIDTH],
+                [2, CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH],
+            ),
+            &device,
+        );
+
+        let patches = patchify(images);
+
+        assert_eq!(patches.dims(), [2, NUM_PATCHES, PATCH_VALUES]);
     }
 }
