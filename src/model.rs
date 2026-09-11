@@ -1,13 +1,37 @@
 use burn::{
     module::Module,
-    nn::{Linear, LinearConfig},
+    nn::{
+        Linear, LinearConfig,
+        attention::{MhaInput, MultiHeadAttention, MultiHeadAttentionConfig},
+    },
     tensor::{Device, Tensor, TensorData},
 };
 
 use crate::dataset::{NUM_PATCHES, PATCH_VALUES};
 
+// Number of features carried by each patch token into the Transformer.
 pub const EMBEDDING_SIZE: usize = 64;
+// Frequency base for the fixed sine-cosine positional encoding.
 pub const POSITION_BASE: f32 = 16.0;
+pub const NUM_ATTENTION_HEADS: usize = 1;
+
+#[derive(Debug, Clone, Copy)]
+pub struct AttentionConfig {
+    pub embedding_size: usize,
+    pub num_heads: usize,
+}
+
+impl AttentionConfig {
+    pub const fn new(embedding_size: usize, num_heads: usize) -> Self {
+        assert!(num_heads > 0);
+        assert!(embedding_size % num_heads == 0);
+
+        Self {
+            embedding_size,
+            num_heads,
+        }
+    }
+}
 
 pub fn positional_encoding(device: &Device) -> Tensor<3> {
     let mut values = Vec::with_capacity(NUM_PATCHES * EMBEDDING_SIZE);
@@ -60,11 +84,33 @@ impl PatchEmbedding {
     }
 }
 
+#[derive(Module, Debug)]
+pub struct SelfAttention {
+    attention: MultiHeadAttention,
+}
+
+impl SelfAttention {
+    pub fn new(config: AttentionConfig, device: &Device) -> Self {
+        Self {
+            attention: MultiHeadAttentionConfig::new(config.embedding_size, config.num_heads)
+                .with_dropout(0.0)
+                .init(device),
+        }
+    }
+
+    pub fn forward(&self, tokens: Tensor<3>) -> Tensor<3> {
+        self.attention.forward(MhaInput::self_attn(tokens)).context
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use burn::tensor::{Tensor, TensorData};
 
-    use super::{EMBEDDING_SIZE, PatchEmbedding, positional_encoding};
+    use super::{
+        AttentionConfig, EMBEDDING_SIZE, NUM_ATTENTION_HEADS, PatchEmbedding, SelfAttention,
+        positional_encoding,
+    };
     use crate::dataset::{NUM_PATCHES, PATCH_VALUES};
 
     #[test]
@@ -99,5 +145,25 @@ mod tests {
         let column_one_offset = EMBEDDING_SIZE;
         assert!((values[column_one_offset + 32] - 1.0_f32.sin()).abs() < 1e-6);
         assert!((values[column_one_offset + 33] - 1.0_f32.cos()).abs() < 1e-6);
+    }
+
+    #[test]
+    fn single_head_attention_preserves_token_shape() {
+        let device = Default::default();
+        let tokens = Tensor::from_data(
+            TensorData::new(
+                vec![0.0; 2 * NUM_PATCHES * EMBEDDING_SIZE],
+                [2, NUM_PATCHES, EMBEDDING_SIZE],
+            ),
+            &device,
+        );
+        let attention = SelfAttention::new(
+            AttentionConfig::new(EMBEDDING_SIZE, NUM_ATTENTION_HEADS),
+            &device,
+        );
+
+        let output = attention.forward(tokens);
+
+        assert_eq!(output.dims(), [2, NUM_PATCHES, EMBEDDING_SIZE]);
     }
 }
