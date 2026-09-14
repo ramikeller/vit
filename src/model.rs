@@ -1,7 +1,7 @@
 use burn::{
     module::Module,
     nn::{
-        Linear, LinearConfig,
+        LayerNorm, LayerNormConfig, Linear, LinearConfig,
         attention::{MhaInput, MultiHeadAttention, MultiHeadAttentionConfig},
         transformer::{PositionWiseFeedForward, PositionWiseFeedForwardConfig},
     },
@@ -124,13 +124,40 @@ impl FeedForward {
     }
 }
 
+#[derive(Module, Debug)]
+pub struct TransformerBlock {
+    attention_norm: LayerNorm,
+    attention: SelfAttention,
+    feed_forward_norm: LayerNorm,
+    feed_forward: FeedForward,
+}
+
+impl TransformerBlock {
+    pub fn new(config: AttentionConfig, hidden_size: usize, device: &Device) -> Self {
+        Self {
+            attention_norm: LayerNormConfig::new(config.embedding_size).init(device),
+            attention: SelfAttention::new(config, device),
+            feed_forward_norm: LayerNormConfig::new(config.embedding_size).init(device),
+            feed_forward: FeedForward::new(config.embedding_size, hidden_size, device),
+        }
+    }
+
+    pub fn forward(&self, tokens: Tensor<3>) -> Tensor<3> {
+        let attention_input = self.attention_norm.forward(tokens.clone());
+        let tokens = tokens.add(self.attention.forward(attention_input));
+        let feed_forward_input = self.feed_forward_norm.forward(tokens.clone());
+
+        tokens.add(self.feed_forward.forward(feed_forward_input))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use burn::tensor::{Tensor, TensorData};
 
     use super::{
         AttentionConfig, EMBEDDING_SIZE, FFN_HIDDEN_SIZE, FeedForward, NUM_ATTENTION_HEADS,
-        PatchEmbedding, SelfAttention, positional_encoding,
+        PatchEmbedding, SelfAttention, TransformerBlock, positional_encoding,
     };
     use crate::dataset::{NUM_PATCHES, PATCH_VALUES};
 
@@ -201,6 +228,27 @@ mod tests {
         let feed_forward = FeedForward::new(EMBEDDING_SIZE, FFN_HIDDEN_SIZE, &device);
 
         let output = feed_forward.forward(tokens);
+
+        assert_eq!(output.dims(), [2, NUM_PATCHES, EMBEDDING_SIZE]);
+    }
+
+    #[test]
+    fn transformer_block_preserves_token_shape() {
+        let device = Default::default();
+        let tokens = Tensor::from_data(
+            TensorData::new(
+                vec![0.0; 2 * NUM_PATCHES * EMBEDDING_SIZE],
+                [2, NUM_PATCHES, EMBEDDING_SIZE],
+            ),
+            &device,
+        );
+        let block = TransformerBlock::new(
+            AttentionConfig::new(EMBEDDING_SIZE, NUM_ATTENTION_HEADS),
+            FFN_HIDDEN_SIZE,
+            &device,
+        );
+
+        let output = block.forward(tokens);
 
         assert_eq!(output.dims(), [2, NUM_PATCHES, EMBEDDING_SIZE]);
     }
