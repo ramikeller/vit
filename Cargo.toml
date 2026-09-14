@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 burn = { version = "=0.22.0-pre.3", features = ["ndarray", "autodiff"] }
 image = "0.25.10"
+rand = "0.9"
