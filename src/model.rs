@@ -18,6 +18,8 @@ pub const POSITION_BASE: f32 = 16.0;
 pub const NUM_ATTENTION_HEADS: usize = 1;
 pub const FFN_HIDDEN_SIZE: usize = 128;
 pub const NUM_CLASSES: usize = 2;
+// Dropout probability applied within attention and the feed-forward network during training.
+pub const DROPOUT_PROB: f64 = 0.1;
 
 #[derive(Debug, Clone, Copy)]
 pub struct AttentionConfig {
@@ -97,7 +99,7 @@ impl SelfAttention {
     pub fn new(config: AttentionConfig, device: &Device) -> Self {
         Self {
             attention: MultiHeadAttentionConfig::new(config.embedding_size, config.num_heads)
-                .with_dropout(0.0)
+                .with_dropout(DROPOUT_PROB)
                 .init(device),
         }
     }
@@ -116,7 +118,7 @@ impl FeedForward {
     pub fn new(embedding_size: usize, hidden_size: usize, device: &Device) -> Self {
         Self {
             network: PositionWiseFeedForwardConfig::new(embedding_size, hidden_size)
-                .with_dropout(0.0)
+                .with_dropout(DROPOUT_PROB)
                 .init(device),
         }
     }

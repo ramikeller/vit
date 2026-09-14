@@ -1,5 +1,6 @@
 use burn::{
-    optim::{AdamConfig, GradientsParams, ModuleOptimizer},
+    module::AutodiffModule,
+    optim::{AdamConfig, GradientsParams, ModuleOptimizer, decay::WeightDecayConfig},
     tensor::{Device, Int, Tensor},
 };
 
@@ -8,9 +9,13 @@ use crate::model::{VisionTransformer, classification_loss};
 
 pub const LEARNING_RATE: f64 = 1.0e-3;
 pub const BATCH_SIZE: usize = 32;
+// L2 penalty applied to weights by the Adam optimizer, to discourage overfitting.
+pub const WEIGHT_DECAY: f32 = 1.0e-4;
 
 pub fn new_adam() -> ModuleOptimizer {
-    AdamConfig::new().init()
+    AdamConfig::new()
+        .with_weight_decay(Some(WeightDecayConfig::new(WEIGHT_DECAY)))
+        .init()
 }
 
 pub fn train_step(
@@ -51,14 +56,17 @@ pub fn train_epoch(
 }
 
 pub fn evaluate(model: &VisionTransformer, samples: &[Sample], device: &Device) -> (f32, f32) {
+    // Evaluate on the inner (non-autodiff) device so dropout is disabled, matching train/eval mode.
+    let eval_device = device.clone().inner();
+    let eval_model = model.valid();
     let mut total_loss = 0.0;
     let mut correct = 0.0;
     let mut num_batches = 0;
 
     for batch in samples.chunks(BATCH_SIZE) {
         let Batch { images, labels } =
-            load_batch(batch, device).expect("failed to load validation batch");
-        let logits = model.forward(images);
+            load_batch(batch, &eval_device).expect("failed to load validation batch");
+        let logits = eval_model.forward(images);
         let predicted = logits.clone().argmax(1).reshape([batch.len()]);
         let matches: f32 = predicted.equal(labels.clone()).float().sum().into_scalar();
 

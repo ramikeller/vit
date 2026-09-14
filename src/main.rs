@@ -8,7 +8,7 @@ use rand::seq::SliceRandom;
 use dataset::{TRAIN_DIRECTORY, VALIDATION_DIRECTORY, discover_samples};
 use training::{evaluate, new_adam, train_epoch};
 
-const NUM_EPOCHS: usize = 5;
+const NUM_EPOCHS: usize = 40;
 
 fn main() {
     let device = Device::default().autodiff();
