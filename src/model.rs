@@ -3,6 +3,7 @@ use burn::{
     nn::{
         Linear, LinearConfig,
         attention::{MhaInput, MultiHeadAttention, MultiHeadAttentionConfig},
+        transformer::{PositionWiseFeedForward, PositionWiseFeedForwardConfig},
     },
     tensor::{Device, Tensor, TensorData},
 };
@@ -14,6 +15,7 @@ pub const EMBEDDING_SIZE: usize = 64;
 // Frequency base for the fixed sine-cosine positional encoding.
 pub const POSITION_BASE: f32 = 16.0;
 pub const NUM_ATTENTION_HEADS: usize = 1;
+pub const FFN_HIDDEN_SIZE: usize = 128;
 
 #[derive(Debug, Clone, Copy)]
 pub struct AttentionConfig {
@@ -103,13 +105,32 @@ impl SelfAttention {
     }
 }
 
+#[derive(Module, Debug)]
+pub struct FeedForward {
+    network: PositionWiseFeedForward,
+}
+
+impl FeedForward {
+    pub fn new(embedding_size: usize, hidden_size: usize, device: &Device) -> Self {
+        Self {
+            network: PositionWiseFeedForwardConfig::new(embedding_size, hidden_size)
+                .with_dropout(0.0)
+                .init(device),
+        }
+    }
+
+    pub fn forward(&self, tokens: Tensor<3>) -> Tensor<3> {
+        self.network.forward(tokens)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use burn::tensor::{Tensor, TensorData};
 
     use super::{
-        AttentionConfig, EMBEDDING_SIZE, NUM_ATTENTION_HEADS, PatchEmbedding, SelfAttention,
-        positional_encoding,
+        AttentionConfig, EMBEDDING_SIZE, FFN_HIDDEN_SIZE, FeedForward, NUM_ATTENTION_HEADS,
+        PatchEmbedding, SelfAttention, positional_encoding,
     };
     use crate::dataset::{NUM_PATCHES, PATCH_VALUES};
 
@@ -163,6 +184,23 @@ mod tests {
         );
 
         let output = attention.forward(tokens);
+
+        assert_eq!(output.dims(), [2, NUM_PATCHES, EMBEDDING_SIZE]);
+    }
+
+    #[test]
+    fn feed_forward_preserves_token_shape() {
+        let device = Default::default();
+        let tokens = Tensor::from_data(
+            TensorData::new(
+                vec![0.0; 2 * NUM_PATCHES * EMBEDDING_SIZE],
+                [2, NUM_PATCHES, EMBEDDING_SIZE],
+            ),
+            &device,
+        );
+        let feed_forward = FeedForward::new(EMBEDDING_SIZE, FFN_HIDDEN_SIZE, &device);
+
+        let output = feed_forward.forward(tokens);
 
         assert_eq!(output.dims(), [2, NUM_PATCHES, EMBEDDING_SIZE]);
     }
