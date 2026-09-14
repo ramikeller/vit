@@ -191,6 +191,34 @@ impl ClassificationHead {
     }
 }
 
+#[derive(Module, Debug)]
+pub struct VisionTransformer {
+    patch_embedding: PatchEmbedding,
+    encoder: TransformerBlock,
+    classifier: ClassificationHead,
+}
+
+impl VisionTransformer {
+    pub fn new(device: &Device) -> Self {
+        let attention_config = AttentionConfig::new(EMBEDDING_SIZE, NUM_ATTENTION_HEADS);
+
+        Self {
+            patch_embedding: PatchEmbedding::new(device),
+            encoder: TransformerBlock::new(attention_config, FFN_HIDDEN_SIZE, device),
+            classifier: ClassificationHead::new(device),
+        }
+    }
+
+    pub fn forward(&self, images: Tensor<4>) -> Tensor<2> {
+        let patches = crate::dataset::patchify(images);
+        let tokens = self.patch_embedding.forward(patches);
+        let encoded_tokens = self.encoder.forward(tokens);
+        let pooled_tokens = mean_pool_tokens(encoded_tokens);
+
+        self.classifier.forward(pooled_tokens)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use burn::tensor::{Tensor, TensorData};
@@ -198,7 +226,7 @@ mod tests {
     use super::{
         AttentionConfig, ClassificationHead, EMBEDDING_SIZE, FFN_HIDDEN_SIZE, FeedForward,
         NUM_ATTENTION_HEADS, NUM_CLASSES, PatchEmbedding, SelfAttention, TransformerBlock,
-        mean_pool_tokens, positional_encoding,
+        VisionTransformer, mean_pool_tokens, positional_encoding,
     };
     use crate::dataset::{NUM_PATCHES, PATCH_VALUES};
 
@@ -308,6 +336,20 @@ mod tests {
         let classifier = ClassificationHead::new(&device);
 
         let logits = classifier.forward(pooled);
+
+        assert_eq!(logits.dims(), [2, NUM_CLASSES]);
+    }
+
+    #[test]
+    fn vision_transformer_maps_images_to_class_logits() {
+        let device = Default::default();
+        let images = Tensor::from_data(
+            TensorData::new(vec![0.0; 2 * 3 * 32 * 32], [2, 3, 32, 32]),
+            &device,
+        );
+        let model = VisionTransformer::new(&device);
+
+        let logits = model.forward(images);
 
         assert_eq!(logits.dims(), [2, NUM_CLASSES]);
     }
