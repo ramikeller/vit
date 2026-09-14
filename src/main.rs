@@ -1,5 +1,6 @@
 mod dataset;
 mod model;
+mod training;
 
 fn main() {
     println!(

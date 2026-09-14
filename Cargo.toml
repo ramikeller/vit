@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-burn = { version = "=0.22.0-pre.3", features = ["ndarray"] }
+burn = { version = "=0.22.0-pre.3", features = ["ndarray", "autodiff"] }
 image = "0.25.10"

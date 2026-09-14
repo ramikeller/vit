@@ -3,9 +3,10 @@ use burn::{
     nn::{
         LayerNorm, LayerNormConfig, Linear, LinearConfig,
         attention::{MhaInput, MultiHeadAttention, MultiHeadAttentionConfig},
+        loss::CrossEntropyLossConfig,
         transformer::{PositionWiseFeedForward, PositionWiseFeedForwardConfig},
     },
-    tensor::{Device, Tensor, TensorData},
+    tensor::{Device, Int, Tensor, TensorData},
 };
 
 use crate::dataset::{NUM_PATCHES, PATCH_VALUES};
@@ -219,6 +220,13 @@ impl VisionTransformer {
     }
 }
 
+pub fn classification_loss(logits: Tensor<2>, labels: Tensor<1, Int>) -> Tensor<1> {
+    let device = logits.device();
+    CrossEntropyLossConfig::new()
+        .init(&device)
+        .forward(logits, labels)
+}
+
 #[cfg(test)]
 mod tests {
     use burn::tensor::{Tensor, TensorData};
@@ -226,7 +234,7 @@ mod tests {
     use super::{
         AttentionConfig, ClassificationHead, EMBEDDING_SIZE, FFN_HIDDEN_SIZE, FeedForward,
         NUM_ATTENTION_HEADS, NUM_CLASSES, PatchEmbedding, SelfAttention, TransformerBlock,
-        VisionTransformer, mean_pool_tokens, positional_encoding,
+        VisionTransformer, classification_loss, mean_pool_tokens, positional_encoding,
     };
     use crate::dataset::{NUM_PATCHES, PATCH_VALUES};
 
@@ -352,5 +360,20 @@ mod tests {
         let logits = model.forward(images);
 
         assert_eq!(logits.dims(), [2, NUM_CLASSES]);
+    }
+
+    #[test]
+    fn classification_loss_returns_one_value() {
+        let device = Default::default();
+        let logits = Tensor::from_data(
+            TensorData::new(vec![1.0, 0.0, 0.0, 1.0], [2, NUM_CLASSES]),
+            &device,
+        );
+        let labels = Tensor::from_data(TensorData::new(vec![0i64, 1], [2]), &device);
+
+        let loss = classification_loss(logits, labels);
+
+        assert_eq!(loss.dims(), [1]);
+        assert!(loss.to_data().as_slice::<f32>().unwrap()[0] > 0.0);
     }
 }
