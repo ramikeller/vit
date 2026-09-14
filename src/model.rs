@@ -16,6 +16,7 @@ pub const EMBEDDING_SIZE: usize = 64;
 pub const POSITION_BASE: f32 = 16.0;
 pub const NUM_ATTENTION_HEADS: usize = 1;
 pub const FFN_HIDDEN_SIZE: usize = 128;
+pub const NUM_CLASSES: usize = 2;
 
 #[derive(Debug, Clone, Copy)]
 pub struct AttentionConfig {
@@ -151,13 +152,53 @@ impl TransformerBlock {
     }
 }
 
+pub fn mean_pool_tokens(tokens: Tensor<3>) -> Tensor<2> {
+    let [batch_size, patch_count, embedding_size] = tokens.dims();
+    assert_eq!(
+        patch_count, NUM_PATCHES,
+        "unexpected number of image patches"
+    );
+    assert_eq!(
+        embedding_size, EMBEDDING_SIZE,
+        "unexpected token feature count"
+    );
+
+    tokens.mean_dim(1).reshape([batch_size, EMBEDDING_SIZE])
+}
+
+#[derive(Module, Debug)]
+pub struct ClassificationHead {
+    projection: Linear,
+}
+
+impl ClassificationHead {
+    pub fn new(device: &Device) -> Self {
+        Self {
+            projection: LinearConfig::new(EMBEDDING_SIZE, NUM_CLASSES).init(device),
+        }
+    }
+
+    pub fn forward(&self, pooled_tokens: Tensor<2>) -> Tensor<2> {
+        let [batch_size, embedding_size] = pooled_tokens.dims();
+        assert_eq!(
+            embedding_size, EMBEDDING_SIZE,
+            "unexpected pooled feature count"
+        );
+
+        self.projection
+            .forward(pooled_tokens)
+            .reshape([batch_size, NUM_CLASSES])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use burn::tensor::{Tensor, TensorData};
 
     use super::{
-        AttentionConfig, EMBEDDING_SIZE, FFN_HIDDEN_SIZE, FeedForward, NUM_ATTENTION_HEADS,
-        PatchEmbedding, SelfAttention, TransformerBlock, positional_encoding,
+        AttentionConfig, ClassificationHead, EMBEDDING_SIZE, FFN_HIDDEN_SIZE, FeedForward,
+        NUM_ATTENTION_HEADS, NUM_CLASSES, PatchEmbedding, SelfAttention, TransformerBlock,
+        mean_pool_tokens, positional_encoding,
     };
     use crate::dataset::{NUM_PATCHES, PATCH_VALUES};
 
@@ -251,5 +292,23 @@ mod tests {
         let output = block.forward(tokens);
 
         assert_eq!(output.dims(), [2, NUM_PATCHES, EMBEDDING_SIZE]);
+    }
+
+    #[test]
+    fn mean_pooling_and_classification_produce_logits() {
+        let device = Default::default();
+        let tokens = Tensor::from_data(
+            TensorData::new(
+                vec![0.0; 2 * NUM_PATCHES * EMBEDDING_SIZE],
+                [2, NUM_PATCHES, EMBEDDING_SIZE],
+            ),
+            &device,
+        );
+        let pooled = mean_pool_tokens(tokens);
+        let classifier = ClassificationHead::new(&device);
+
+        let logits = classifier.forward(pooled);
+
+        assert_eq!(logits.dims(), [2, NUM_CLASSES]);
     }
 }
