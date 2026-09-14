@@ -73,8 +73,18 @@ fn is_image_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-pub fn load_image(path: impl AsRef<Path>, device: &Device) -> Result<Tensor<3>, Box<dyn Error>> {
-    let image = image::open(path)?
+pub fn load_image(
+    path: impl AsRef<Path>,
+    device: &Device,
+    augment: bool,
+) -> Result<Tensor<3>, Box<dyn Error>> {
+    let mut image = image::open(path)?;
+
+    if augment && rand::random::<bool>() {
+        image = image.fliph();
+    }
+
+    let image = image
         .resize_exact(
             IMAGE_WIDTH as u32,
             IMAGE_HEIGHT as u32,
@@ -99,7 +109,11 @@ pub fn load_image(path: impl AsRef<Path>, device: &Device) -> Result<Tensor<3>, 
     ))
 }
 
-pub fn load_batch(samples: &[Sample], device: &Device) -> Result<Batch, Box<dyn Error>> {
+pub fn load_batch(
+    samples: &[Sample],
+    device: &Device,
+    augment: bool,
+) -> Result<Batch, Box<dyn Error>> {
     if samples.is_empty() {
         return Err("cannot load an empty batch".into());
     }
@@ -107,7 +121,7 @@ pub fn load_batch(samples: &[Sample], device: &Device) -> Result<Batch, Box<dyn 
     let mut images = Vec::with_capacity(samples.len());
     let mut labels = Vec::with_capacity(samples.len());
     for sample in samples {
-        images.push(load_image(&sample.path, device)?);
+        images.push(load_image(&sample.path, device, augment)?);
         labels.push(sample.label as i64);
     }
 
@@ -173,7 +187,7 @@ mod tests {
         source.save(&path).unwrap();
 
         let device = Default::default();
-        let tensor = load_image(&path, &device).unwrap();
+        let tensor = load_image(&path, &device, false).unwrap();
 
         assert_eq!(tensor.dims(), [CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH]);
         assert!(
@@ -243,7 +257,7 @@ mod tests {
             },
         ];
         let device = Default::default();
-        let batch = load_batch(&samples, &device).unwrap();
+        let batch = load_batch(&samples, &device, false).unwrap();
 
         assert_eq!(
             batch.images.dims(),

@@ -45,7 +45,7 @@ pub fn train_epoch(
 
     for batch in samples.chunks(BATCH_SIZE) {
         let Batch { images, labels } =
-            load_batch(batch, device).expect("failed to load training batch");
+            load_batch(batch, device, true).expect("failed to load training batch");
         let (updated_model, loss) = train_step(model, optimizer, images, labels);
         model = updated_model;
         total_loss += loss;
@@ -65,7 +65,7 @@ pub fn evaluate(model: &VisionTransformer, samples: &[Sample], device: &Device) 
 
     for batch in samples.chunks(BATCH_SIZE) {
         let Batch { images, labels } =
-            load_batch(batch, &eval_device).expect("failed to load validation batch");
+            load_batch(batch, &eval_device, false).expect("failed to load validation batch");
         let logits = eval_model.forward(images);
         let predicted = logits.clone().argmax(1).reshape([batch.len()]);
         let matches: f32 = predicted.equal(labels.clone()).float().sum().into_scalar();
